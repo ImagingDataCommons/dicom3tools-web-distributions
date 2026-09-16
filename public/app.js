@@ -29,6 +29,26 @@ const els = {
 let files = [];
 let lastResults = [];
 
+// Object URLs for produced files. Each one pins the file's bytes in memory for
+// as long as it exists, so they are released whenever the results they belong
+// to go away rather than being left to accumulate for the life of the page.
+const objectUrls = [];
+
+function releaseObjectUrls() {
+  while (objectUrls.length) URL.revokeObjectURL(objectUrls.pop());
+}
+
+// Removing the files should remove what was read out of them too: a dump of a
+// dataset holds everything the file held, and leaving it on screen after the
+// file list is emptied is not what "Remove all" looks like it does.
+function clearResults() {
+  releaseObjectUrls();
+  lastResults = [];
+  els.results.innerHTML = '';
+  els.summary.hidden = true;
+  els.resultsSection.hidden = true;
+}
+
 /* ---------- worker pool ---------- */
 
 const POOL_SIZE = Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 2) - 1));
@@ -306,9 +326,8 @@ function buildArgs(tool, names) {
 async function runTool() {
   const tool = currentTool();
   setBusy(true);
-  els.results.innerHTML = '';
+  clearResults();
   els.resultsSection.hidden = false;
-  lastResults = [];
 
   try {
     if (tool.composed) {
@@ -452,6 +471,7 @@ function setBusy(busy) {
 }
 
 function renderResults() {
+  releaseObjectUrls();
   els.results.innerHTML = '';
   const onlyProblems = els.onlyProblems.checked;
 
@@ -505,8 +525,10 @@ function renderResult(result) {
     downloads.className = 'downloads';
     for (const file of result.produced) {
       const blob = new Blob([file.bytes]);
+      const url = URL.createObjectURL(blob);
+      objectUrls.push(url);
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
+      link.href = url;
       link.download = file.name;
       link.className = 'download';
       link.textContent = 'Download ' + file.name + ' (' + formatSize(blob.size) + ')';
@@ -578,7 +600,11 @@ els.filelist.addEventListener('click', (e) => {
   files.splice(Number(button.dataset.index), 1);
   renderFiles();
 });
-els.clearFiles.addEventListener('click', () => { files = []; renderFiles(); });
+els.clearFiles.addEventListener('click', () => {
+  files = [];
+  renderFiles();
+  clearResults();
+});
 
 els.copyAll.addEventListener('click', async () => {
   const text = lastResults.map((r) => '===== ' + r.label + ' =====\n' + r.lines.join('\n')).join('\n\n');

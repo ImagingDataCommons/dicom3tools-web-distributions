@@ -29,8 +29,10 @@ const d = w.document;
 // the way separate <script> tags do in a browser.
 w.eval(
   [read('build-info.js'), read('tools.js'), read('app.js')].join('\n') +
-  // top-level const in an eval is scoped to that eval, so hand the catalog out
-  '\nwindow.__TOOLS = TOOLS;'
+  // top-level const in an eval is scoped to that eval, so hand out what the
+  // assertions below need to reach
+  '\nwindow.__TOOLS = TOOLS;' +
+  '\nwindow.__app = { els, renderResults, setResults: (r) => { lastResults = r; } };'
 );
 
 const panel = d.getElementById('tool-panel');
@@ -116,6 +118,46 @@ for (const tool of TOOLS) {
   const hits = suspectTokens(tool.example.cmd + ' ' + tool.example.out);
   check('no identifier-shaped values in ' + tool.id + (hits.length ? ': ' + hits.join(', ') : ''),
     hits.length === 0);
+}
+
+console.log('clearing');
+// A dump holds everything the file held, so "Remove all" has to take the
+// results with it, and the object URLs behind any produced files have to be
+// released rather than left pinning those bytes in memory.
+{
+  const revoked = [];
+  const realRevoke = w.URL.revokeObjectURL;
+  w.URL.revokeObjectURL = (u) => { revoked.push(u); if (realRevoke) realRevoke.call(w.URL, u); };
+  w.URL.createObjectURL = w.URL.createObjectURL || (() => 'blob:stub');
+
+  // stand in a finished run, including a produced file to download
+  w.__app.setResults([{
+    label: 'a.dcm', lines: ['Error - something'], exitCode: 1,
+    errors: 1, warnings: 0,
+    produced: [{ name: 'a.raw', bytes: new w.ArrayBuffer(8) }],
+  }]);
+  w.__app.els.resultsSection.hidden = false;
+  w.__app.renderResults();
+  check('a finished run renders results', d.getElementById('results').children.length > 0);
+  check('a produced file gets a download link', d.querySelectorAll('.download').length === 1);
+
+  d.getElementById('clear-files').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+
+  check('clearing files clears the results', d.getElementById('results').children.length === 0);
+  check('clearing files hides the results section', d.getElementById('results-section').hasAttribute('hidden'));
+  check('clearing files releases the object URLs', revoked.length > 0);
+}
+
+console.log('content policy');
+{
+  const html = read('index.html');
+  const m = html.match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/);
+  check('a content policy is declared', !!m);
+  const csp = m ? m[1] : '';
+  check("only same-origin requests are allowed", /connect-src 'self'/.test(csp));
+  check('no remote script origins are allowed', /script-src 'self' 'wasm-unsafe-eval'/.test(csp));
+  check('wasm compilation is still permitted', /'wasm-unsafe-eval'/.test(csp));
+  check('objects and form posts are denied', /object-src 'none'/.test(csp) && /form-action 'none'/.test(csp));
 }
 
 console.log('css');
