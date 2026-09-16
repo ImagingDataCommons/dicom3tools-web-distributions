@@ -86,11 +86,13 @@ file copy.
 
 `.github/workflows/watch-upstream.yml` runs weekly and compares the snapshot in
 `VERSION.txt` against
-[ImagingDataCommons/dicom3tools](https://github.com/ImagingDataCommons/dicom3tools),
-the repository `build.sh` clones. If upstream has moved it opens an issue, one
-per snapshot, explaining how to rebuild. It fails rather than reporting success
-if the check itself cannot reach upstream, since a watcher that goes quiet on
-error is worse than no watcher.
+[ImagingDataCommons/dicom3tools](https://github.com/ImagingDataCommons/dicom3tools)
+— the C++ source `build.sh` clones, not the Python packaging repository. It
+reads whichever branch is upstream's default, so it tracks exactly what a
+rebuild would fetch. If upstream has moved it opens an issue, one per snapshot,
+explaining how to rebuild. It fails rather than reporting success if the check
+cannot reach upstream or cannot parse the result, since a watcher that goes
+quiet on error is worse than no watcher.
 
 ## Testing
 

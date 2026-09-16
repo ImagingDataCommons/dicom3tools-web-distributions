@@ -27,15 +27,25 @@ jobs:
 
       - name: Compare our snapshot with upstream
         id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: ImagingDataCommons/dicom3tools
         run: |
           set -euo pipefail
 
           ours=$(sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/' VERSION.txt)
 
+          # Read whichever branch is upstream's default, because that is what
+          # build.sh clones. That repository currently has both main and master
+          # at the same commit; hardcoding either would silently report "up to
+          # date" forever if the one we picked stopped being maintained.
+          branch=$(gh api "repos/$UPSTREAM" --jq .default_branch)
+          echo "upstream default branch: $branch"
+
           # Fail loudly rather than reporting "up to date" if the fetch breaks:
           # a watcher that goes quiet on error is worse than no watcher.
           archive=$(curl -fsSL --max-time 60 \
-            https://raw.githubusercontent.com/ImagingDataCommons/dicom3tools/master/VERSION.txt \
+            "https://raw.githubusercontent.com/$UPSTREAM/$branch/VERSION.txt" \
             | tr -d '\n')
           theirs=$(printf %s "$archive" | sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/')
 
