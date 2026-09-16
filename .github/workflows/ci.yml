@@ -42,6 +42,11 @@ jobs:
           # The page states which dicom3tools snapshot produced the binary.
           # If these drift, the page is claiming a version it was not built from.
           from_file=$(sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/' VERSION.txt)
-          from_page=$(grep -oE "dicom3toolsSnapshot: '[0-9]+'" public/build-info.js | grep -oE '[0-9]+')
+          # Read the value rather than grepping for digits: "dicom3tools" itself
+          # contains a 3, so a bare [0-9]+ match returns that as a second line.
+          from_page=$(node -e "
+            const s = require('fs').readFileSync('public/build-info.js', 'utf8');
+            process.stdout.write(new Function(s + ';return BUILD_INFO;')().dicom3toolsSnapshot);
+          ")
           echo "VERSION.txt: $from_file / build-info.js: $from_page"
           test "$from_file" = "$from_page" || { echo "snapshot mismatch"; exit 1; }
