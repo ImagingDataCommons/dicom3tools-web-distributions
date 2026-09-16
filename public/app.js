@@ -77,8 +77,6 @@ function runInWorker(message) {
   });
 }
 
-/* ---------- tool picker ---------- */
-
 /* ---------- tool picker ----------
  *
  * A listbox with each tool's description on the row, and a panel alongside
@@ -522,6 +520,18 @@ function renderResult(result) {
 }
 
 /* ---------- events ---------- */
+
+/* The snapshot the wasm was built from. dicom3tools behaviour changes between
+   releases, so a result is only meaningful against a known version. */
+if (typeof BUILD_INFO !== 'undefined') {
+  const snapshot = document.getElementById('build-snapshot');
+  const extra = document.getElementById('build-extra');
+  if (snapshot) {
+    snapshot.textContent = BUILD_INFO.dicom3toolsSnapshot;
+    snapshot.title = BUILD_INFO.dicom3toolsArchive;
+  }
+  if (extra) extra.textContent = ', built ' + BUILD_INFO.built;
+}
 
 els.toolTrigger.addEventListener('click', () => openToolPicker(els.toolPanel.hidden));
 els.toolSearch.addEventListener('input', renderToolList);

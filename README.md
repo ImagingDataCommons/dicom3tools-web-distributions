@@ -6,6 +6,14 @@ inspected in a browser without installing the command line tools.
 
 Files are read and processed inside the browser tab. Nothing is uploaded.
 
+Published to GitHub Pages on every push to `main`:
+**https://imagingdatacommons.github.io/dicom3tools-web-distributions/**
+
+The page states which dicom3tools snapshot the binary was built from. This
+matters: behaviour changes between releases, so what one snapshot reports as an
+error another may not mention at all, and a finding is only meaningful against a
+known version.
+
 ## What is included
 
 24 tools, grouped as they appear in the page:
@@ -60,6 +68,25 @@ this short:
 `pbmtext` at build time, and without it `smptetxt.h` is generated empty and the
 tool fails to compile.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request and push to `main`:
+
+- syntax checks every script,
+- runs `test-ui.js`, which drives the real page scripts against a DOM and
+  asserts the tool picker behaves,
+- confirms the committed wasm is present and starts with the wasm magic number,
+- confirms the snapshot in `public/build-info.js` matches `VERSION.txt`, so the
+  page cannot claim a version it was not built from.
+
+`.github/workflows/pages.yml` publishes `public/` to GitHub Pages on push to
+`main`, and can be run by hand from the Actions tab. Nothing is compiled at
+deploy time; the wasm is built by `build.sh` and committed, so a deploy is a
+file copy.
+
+GitHub Pages has no per-pull-request preview, so CI checks a pull request but
+does not deploy one.
+
 ## Testing
 
 `test.sh` compares the wasm build against the native binaries from the
@@ -68,6 +95,13 @@ tool fails to compile.
 ```sh
 pip install dicom3tools
 ./test.sh /path/to/dicom/files
+```
+
+The user interface has its own test, which needs no DICOM files and is what CI
+runs:
+
+```sh
+npm install --no-save jsdom && node test-ui.js
 ```
 
 The text-producing tools are expected to be byte identical. Tools that mint
@@ -80,16 +114,16 @@ compressed pixel data, natively and in wasm alike.
 
 ## TODO
 
-- **CI/CD needs work.** There is no automated build or deploy. `build.sh` is run
-  by hand and the result committed, and deploys are triggered manually with the
-  Netlify CLI. This should become: build the wasm on a workflow, publish a
-  deploy preview for each pull request, and deploy to production on merge to
-  `main`. The sibling
+- The wasm is still built by hand. `build.sh` is run locally and the binary
+  committed; CI only publishes it. The sibling
   [dicom3tools-python-distributions](https://github.com/ImagingDataCommons/dicom3tools-python-distributions)
-  repository builds per upstream snapshot and pins artefacts by SHA256; this
-  repository should follow the same pattern rather than committing the binary.
-- No automated rebuild when a new upstream dicom3tools snapshot is released.
-  `VERSION.txt` records the snapshot the committed binary was built from.
+  repository builds per upstream snapshot and pins artefacts by SHA256 rather
+  than committing them, and this repository should follow that pattern before
+  the history accumulates many 7 MB binaries.
+- No automated rebuild when a new upstream dicom3tools snapshot is released, and
+  nothing watches for one. `VERSION.txt` and `public/build-info.js` record the
+  snapshot the committed binary was built from.
+- No per-pull-request preview deployment.
 - Seven tools show a written description rather than captured output in the
   picker, because they need input the samples do not cover: a structured
   report, a DICOMDIR, a matched pair.

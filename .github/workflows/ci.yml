@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install test dependency
+        run: npm install --no-save jsdom
+
+      - name: Syntax check
+        run: |
+          for f in public/*.js test-ui.js; do
+            node --check "$f"
+          done
+          bash -n build.sh
+          bash -n test.sh
+
+      - name: UI and catalog tests
+        run: node test-ui.js
+
+      - name: Wasm artifact is present and well formed
+        run: |
+          test -f public/dicom3tools.wasm || { echo "public/dicom3tools.wasm is missing"; exit 1; }
+          # wasm magic number: 0x00 0x61 0x73 0x6d
+          magic=$(head -c 4 public/dicom3tools.wasm | xxd -p)
+          test "$magic" = "0061736d" || { echo "not a wasm binary: $magic"; exit 1; }
+          echo "wasm size: $(du -h public/dicom3tools.wasm | cut -f1)"
+
+      - name: Recorded snapshot matches the page
+        run: |
+          # The page states which dicom3tools snapshot produced the binary.
+          # If these drift, the page is claiming a version it was not built from.
+          from_file=$(sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/' VERSION.txt)
+          from_page=$(grep -oE "dicom3toolsSnapshot: '[0-9]+'" public/build-info.js | grep -oE '[0-9]+')
+          echo "VERSION.txt: $from_file / build-info.js: $from_page"
+          test "$from_file" = "$from_page" || { echo "snapshot mismatch"; exit 1; }
