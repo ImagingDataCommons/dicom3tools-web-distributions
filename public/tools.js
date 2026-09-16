@@ -16,6 +16,13 @@
 //           output was captured from the actual binary; `real: false` means
 //           there is no captured sample yet and the text describes the result
 //           rather than pretending to be output.
+//
+//           Examples never carry identifiers out of the file they were
+//           captured from. Where a tool prints a patient name, patient id,
+//           accession number or date, the value is replaced with an obviously
+//           synthetic one and the sample says so. The point of a sample is the
+//           shape of the output, which the real values contribute nothing to.
+//           test-ui.js fails the build if an identifier-shaped value appears.
 
 const OPTION_INPUT = [
   { flag: '-input-nometa', label: 'No meta header' },
@@ -73,16 +80,16 @@ const TOOLS = [
       out: 'Transfer Syntax to read data set is unencapsulated\nIs a non-enhanced family instance\nIs not an instance of a Concatenation\nIs an image with a single frame\nIs an image with unencapsulated PixelData' } },
 
   { id: 'dcsrdump', group: 'Inspect', summary: 'Print structured report content as a tree', arity: 'each', output: 'text',
-    example: { cmd: 'dcsrdump report.dcm', real: false,
-      out: 'Prints the structured report content tree, one content item per line, indented by nesting level.' } },
+    example: { cmd: 'dcsrdump report.dcm', real: true,
+      out: ': CONTAINER: (126000,DCM,"Imaging Measurement Report")  [SEPARATE] (DCMR,1500)\n\t>HAS CONCEPT MOD: CODE: (121049,DCM,"Language of Content Item and Descendants")  = (eng,RFC5646,"English")\n\t>HAS OBS CONTEXT: PNAME: (121008,DCM,"Person Observer Name")  = "unknown^unknown"' } },
 
   { id: 'dccidump', group: 'Inspect', summary: 'Print the content items of a structured object', arity: 'each', output: 'text',
-    example: { cmd: 'dccidump report.dcm', real: false,
-      out: 'Prints each content item with its concept name and value.' } },
+    example: { cmd: 'dccidump report.dcm', real: true,
+      out: 'CONTAINER: (126000,DCM,"Imaging Measurement Report")  [SEPARATE] (DCMR,1500)\nContent Sequence\n\tCODE: (121049,DCM,"Language of Content Item and Descendants")  = (eng,RFC5646,"English")' } },
 
   { id: 'dcdirdmp', group: 'Inspect', summary: 'List what a DICOMDIR indexes', arity: 'each', output: 'text',
-    example: { cmd: 'dcdirdmp DICOMDIR', real: false,
-      out: 'Lists the patient, study, series and image records the DICOMDIR points at.' } },
+    example: { cmd: 'dcdirdmp DICOMDIR', real: true,
+      out: 'PATIENT Anon^Patient ANON0001\n\tSTUDY 20200101 ACC0000001 20200101 120000.000000\n\t\tSERIES 1 MR\n\t\t\tIMAGE 30\n\t\t\t -> c3.dcm\n\n(identifiers replaced; the layout is what the tool prints)' } },
 
   { id: 'dckey', group: 'Inspect', summary: 'Print just the attribute values you name', arity: 'each', output: 'text',
     example: { cmd: 'dckey -k Modality -k PatientID CT_small.dcm', real: true, out: 'CT\n1CT1' },
@@ -102,8 +109,8 @@ const TOOLS = [
 
   { id: 'dccmp', group: 'Compare', summary: 'Compare pixel data of two files byte for byte',
     arity: 'pair', output: 'text', composed: true,
-    example: { cmd: 'dccmp a.dcm b.dcm', real: false,
-      out: 'Reports the first differing byte, or nothing when the pixel data matches.' } },
+    example: { cmd: 'dccmp a.dcm b.dcm', real: true,
+      out: 'Identical pixel data prints nothing.\n\nWhen they differ:\n  a.dcm b.dcm differ: char 1, line 1' } },
 
   { id: 'dcdiff', group: 'Compare', summary: 'Diff the headers of two files',
     arity: 'pair', output: 'text', composed: true,
@@ -112,14 +119,14 @@ const TOOLS = [
 
   { id: 'dccp', group: 'Convert', summary: 'Copy a file, optionally changing its encoding', arity: 'each', output: 'file',
     outputVia: 'stdout', outputName: (n) => n.replace(/\.dcm$/i, '') + '.copy.dcm',
-    example: { cmd: 'dccp -removeprivate in.dcm', real: false,
-      out: 'Writes the copied file, with private tags removed.' },
+    example: { cmd: 'dccp -removeprivate in.dcm > out.dcm', real: true,
+      out: 'Warning - Bad group length - Group 0x2 specified as 0xb8 actually 0xd6\n\n(128634 bytes in, 120344 out: 8 KB of private tags removed)' },
     options: [{ flag: '-removeprivate', label: 'Remove private tags' }] },
 
-  { id: 'dcdecmpr', group: 'Convert', summary: 'Decompress encapsulated pixel data', arity: 'each', output: 'file',
+  { id: 'dcdecmpr', group: 'Convert', summary: 'Decompress ACR-NEMA compressed pixel data', arity: 'each', output: 'file',
     outputVia: 'stdout', outputName: (n) => n.replace(/\.dcm$/i, '') + '.decompressed.dcm',
-    example: { cmd: 'dcdecmpr compressed.dcm', real: false,
-      out: 'Writes the same object with its pixel data decompressed.' } },
+    example: { cmd: 'dcdecmpr acrnema.dcm', real: true,
+      out: 'BitsStored = <16>\nColumns = <5>\nRows = <2>\nCompressionRecognitionCode = <ACR-NEMA 1.0>\nCompressionCode = <DEF>' } },
 
   { id: 'dctoraw', group: 'Convert', summary: 'Write the pixel data out as a raw file', arity: 'each', output: 'file',
     outputVia: 'stdout', outputName: (n) => n.replace(/\.dcm$/i, '') + '.raw',
@@ -133,28 +140,29 @@ const TOOLS = [
 
   { id: 'dcuidchg', group: 'Convert', summary: 'Rewrite UIDs consistently across a set of files', arity: 'all', output: 'file',
     outputVia: 'outdir',
-    example: { cmd: 'dcuidchg -outdir out *.dcm', real: false,
-      out: 'Writes each file to the output directory with new, consistently remapped UIDs.' } },
+    example: { cmd: 'dcuidchg -outdir out in.dcm', real: true,
+      out: 'Warning - Bad group length - Group 0x2 specified as 0xb8 actually 0xd6\n\n(writes out/in.dcm, 128590 bytes, with remapped UIDs)' } },
 
   { id: 'dcmulti', group: 'Convert', summary: 'Build a multiframe image from single frames', arity: 'all', output: 'file',
     outputVia: 'stdout', outputName: () => 'multiframe.dcm',
-    example: { cmd: 'dcmulti frame1.dcm frame2.dcm', real: false,
-      out: 'Writes one multiframe object built from the inputs.' } },
+    example: { cmd: 'dcmulti c1.dcm c2.dcm c3.dcm > multi.dcm', real: true,
+      out: 'c1.dcm: Error - Missing attribute - Study ID\n\n(writes a 360132 byte object with NumberOfFrames = 3)' } },
 
   { id: 'dcdirmk', group: 'Convert', summary: 'Create a DICOMDIR for the selected files', arity: 'all', output: 'file',
     outputVia: 'stdout', outputName: () => 'DICOMDIR',
-    example: { cmd: 'dcdirmk *.dcm', real: false,
-      out: 'Writes a DICOMDIR indexing the given files.' } },
+    example: { cmd: 'dcdirmk c1.dcm c2.dcm c3.dcm > DICOMDIR', real: true,
+      out: 'c1.dcm: Warning - Missing attribute - Study ID - using default value <20200101>\n\n(writes a 14600 byte DICOMDIR indexing the three images; date replaced)' } },
 
   { id: 'dcsort', group: 'Convert', summary: 'Produce a sorted list of the selected images', arity: 'all', output: 'text',
-    example: { cmd: 'dcsort *.dcm', real: false, out: 'Prints the filenames in sorted order.' } },
+    example: { cmd: 'dcsort *.dcm', real: false,
+      out: 'Produced no output on any input tried, including a single series and a directory of images. Needs investigation.' } },
 
   { id: 'rawtodc', group: 'Convert', summary: 'Build a DICOM file from raw pixel data', arity: 'each', output: 'file',
     outputVia: 'stdout', outputName: (n) => n.replace(/\.raw$/i, '') + '.dcm',
     requiredArgs: ['-rows', '-columns', '-bits'],
-    example: { cmd: 'rawtodc -rows 512 -columns 512 -bits 16 in.raw', real: false,
-      out: 'Writes a DICOM object wrapping the raw pixel data.' },
-    freeformHint: '-rows 512 -columns 512 -bits 16' },
+    example: { cmd: 'rawtodc -rows 512 -columns 512 -bits 16 -little px.raw', real: true,
+      out: '(writes a 119680 byte DICOM object wrapping the raw pixels)\n\nWithout -little or -big:\n  Error - Options incompatible - bits > 8 && !(little|big)' },
+    freeformHint: '-rows 512 -columns 512 -bits 16 -little' },
 
   { id: 'dcsmpte', group: 'Convert', summary: 'Generate a SMPTE test pattern', arity: 'none', output: 'file',
     outputVia: 'stdout', outputName: () => 'smpte.dcm',

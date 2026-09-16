@@ -130,12 +130,10 @@ compressed pixel data, natively and in wasm alike.
 - Rebuilding on a new upstream snapshot is still manual. `watch-upstream.yml`
   notices and opens an issue, but someone then runs `build.sh` and opens the
   pull request by hand.
-- 11 of the 24 tools show a written description rather than captured output in
-  the picker. Five produce text but need input the samples do not cover
-  (`dcsrdump`, `dccidump`, `dcdirdmp`, `dccmp`, `dcsort` — a structured report,
-  a DICOMDIR, a matched pair, a set worth sorting). Six produce files rather
-  than text (`dccp`, `dcdecmpr`, `dcuidchg`, `dcmulti`, `dcdirmk`, `rawtodc`),
-  so a useful sample needs something other than a few lines of output.
+- `dcsort` is the one tool still showing a written description rather than
+  captured output. It produced no output on any input tried, including a single
+  series and a directory of images, so it needs investigating rather than a
+  better sample.
 - `dcanon` is not implemented.
 
 ## Licence
