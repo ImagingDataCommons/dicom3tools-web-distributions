@@ -1,0 +1,130 @@
+#!/bin/bash
+#
+# Builds dicom3tools to WebAssembly: one wasm binary containing every tool.
+#
+# Everything runs inside the emscripten/emsdk container, so the only
+# requirement on the host is Docker.
+#
+#   ./build.sh
+#
+# Two things about the upstream build are worth knowing, because they are what
+# make this short:
+#
+#   1. All of dicom3tools' code generation is awk driving template files. No
+#      compiled host tool is run during the build, so there is no host/target
+#      split to arrange - the compiler can simply be swapped for em++.
+#   2. Each tool is a single .cc linked against three static libraries. Renaming
+#      each tool's main() lets them all share one wasm, so the ~18MB of
+#      dictionary and IOD tables is paid for once rather than per tool.
+#
+set -euo pipefail
+
+SRC_REPO="${SRC_REPO:-https://github.com/ImagingDataCommons/dicom3tools.git}"
+EMSDK_IMAGE="${EMSDK_IMAGE:-emscripten/emsdk:3.1.74}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+WORK="$HERE/.build"
+
+# Seven helpers are copy-pasted into several tools, so they collide when the
+# tools share a binary. Renaming them per tool keeps each tool's own copy.
+COLLIDING="dumpTransferSyntax dumpTransferSyntaxVR dumpTransferSyntaxUID \
+dumpTransferSyntaxByteOrder dumpTransferSyntaxDescription \
+dumpTransferSyntaxEncapsulation dumpTransferSyntaxPixelByteOrder"
+
+mkdir -p "$WORK"
+
+if [ ! -d "$WORK/src" ]; then
+  echo "Fetching dicom3tools source"
+  git clone --depth 1 "$SRC_REPO" "$WORK/src"
+fi
+
+cat > "$WORK/tools.txt" <<'EOF'
+dciodvfy
+dcentvfy
+dcdump
+dcfile
+dcinfo
+dckey
+dcdict
+dcsrdump
+dccidump
+dcdirdmp
+dcstats
+dchist
+dccp
+dcuidchg
+dcsort
+dcmulti
+dcdirmk
+dcdecmpr
+dctoraw
+rawtodc
+dctopnm
+dcsmpte
+EOF
+
+sed 's/^/TOOL(/;s/$/)/' "$WORK/tools.txt" > "$WORK/toollist.h"
+cp "$HERE/dispatch.cc" "$WORK/dispatch.cc"
+
+docker run --rm \
+  -v "$WORK:/work" \
+  -v "$HERE:/out" \
+  "$EMSDK_IMAGE" bash -c '
+set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq >/dev/null
+# netpbm is needed: dcsmpte renders its label text with pbmtext at build time,
+# and without it smptetxt.h is generated empty and dcsmpte will not compile.
+apt-get install -y -qq xutils-dev gawk netpbm >/dev/null
+
+cd /work/src
+
+echo "==> configuring"
+./Configure >/dev/null
+imake -I./config -DInstallInTopDir
+
+# First pass with the host compiler. Its object files are thrown away; what is
+# wanted is the awk-generated headers and tables, which are compiler
+# independent. -k because some targets (X11-dependent ones) are expected to
+# fail and are not needed here.
+echo "==> generating headers"
+make -k World >/dev/null 2>&1 || true
+
+echo "==> rebuilding libraries with em++"
+find . -name "*.o" -delete
+find . -name "*.a" -delete
+rm -f libsrc/lib/lib*
+cd libsrc
+make -k CC=emcc CCC=em++ AR="emar rcv" RANLIB=emranlib STRIP=: >/dev/null 2>&1 || true
+ls lib/libdctl.a lib/libdlcl.a lib/libgener.a >/dev/null
+
+echo "==> compiling tools"
+cd /work/src/appsrc/dcfile
+OBJS=""
+while read -r t; do
+  DEFS="-Dmain=${t}_main"
+  for c in '"$COLLIDING"'; do DEFS="$DEFS -D${c}=${t}_${c}"; done
+  rm -f "$t.o"
+  make "$t.o" CCC="em++ $DEFS" >/dev/null 2>&1
+  OBJS="$OBJS $t.o"
+done < /work/tools.txt
+
+cp /work/dispatch.cc /work/toollist.h .
+em++ -c -I. -O2 dispatch.cc -o dispatch.o
+
+echo "==> linking"
+# EXIT_RUNTIME=1 matters: most file-producing tools write their output to
+# stdout, and without the exit handlers the final buffer is never flushed,
+# silently truncating the result.
+em++ -O2 dispatch.o $OBJS \
+  -L/work/src/libsrc/lib -ldctl -ldlcl -lgener \
+  -o /out/public/dicom3tools.js \
+  -sMODULARIZE=1 -sEXPORT_NAME=createDicom3tools \
+  -sEXPORTED_RUNTIME_METHODS=callMain,FS \
+  -sINVOKE_RUN=0 -sEXIT_RUNTIME=1 \
+  -sALLOW_MEMORY_GROWTH=1 -sFORCE_FILESYSTEM=1 \
+  -sENVIRONMENT=web,worker,node -sSTACK_SIZE=5MB
+'
+
+echo
+echo "Built:"
+ls -la "$HERE/public/dicom3tools.js" "$HERE/public/dicom3tools.wasm"

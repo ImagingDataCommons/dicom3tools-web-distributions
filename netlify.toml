@@ -1,0 +1,25 @@
+[build]
+  # Nothing is built at deploy time. The wasm is produced by ./build.sh and
+  # committed; only the contents of public/ are served.
+  publish = "public"
+
+[build.processing]
+  # Netlify otherwise injects a marketing comment, meta tags and a HUD script
+  # into index.html. Skipping post-processing keeps the served page byte for
+  # byte what is in public/, and keeps third-party scripts off a page people
+  # open medical images with.
+  skip_processing = true
+
+# Revalidate rather than cache hard: the wasm keeps the same filename across
+# rebuilds, so a long max-age would keep serving a stale binary after an
+# update. ETags still make the repeat cost a 304 rather than a re-download.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+    Cache-Control = "public, max-age=0, must-revalidate"

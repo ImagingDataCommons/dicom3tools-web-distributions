@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dicom3tools in the browser</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <h1>dicom3tools</h1>
+    <p class="tagline">
+      David Clunie's DICOM tools, compiled to WebAssembly.
+      <strong>Files are processed in this browser tab and are never uploaded.</strong>
+    </p>
+  </div>
+</header>
+
+<main>
+  <section class="panel" aria-labelledby="tool-heading">
+    <h2 id="tool-heading">1. Choose a tool</h2>
+    <div class="picker">
+      <button type="button" class="trigger" id="tool-trigger" aria-haspopup="listbox" aria-expanded="false">
+        <span class="trigger-main">
+          <span class="trigger-name" id="tool-name"></span>
+          <span class="trigger-desc" id="tool-summary"></span>
+        </span>
+        <span class="chev" aria-hidden="true">&#9662;</span>
+      </button>
+      <div class="picker-panel" id="tool-panel" hidden>
+        <div class="picker-list">
+          <div class="search-row">
+            <input class="search" id="tool-search" type="text" autocomplete="off"
+                   placeholder="Filter by name or what it does" aria-label="Filter tools">
+          </div>
+          <div class="scroll" id="tool-list" role="listbox" aria-label="Tools"></div>
+        </div>
+        <aside class="picker-detail" id="tool-detail" aria-live="polite"></aside>
+      </div>
+    </div>
+    <div id="options" class="options"></div>
+    <div class="freeform">
+      <label for="extra-args">Additional arguments</label>
+      <input id="extra-args" type="text" spellcheck="false" autocomplete="off">
+      <p class="hint" id="extra-hint">Passed through verbatim, exactly as on the command line.</p>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="files-heading">
+    <h2 id="files-heading">2. Add files</h2>
+    <div id="dropzone" class="dropzone" tabindex="0" role="button"
+         aria-label="Add DICOM files: click to browse, or drop files here">
+      <p class="dropzone-main">Drop DICOM files here</p>
+      <p class="dropzone-sub">or click to browse. Folders are accepted.</p>
+      <input id="file-input" type="file" multiple hidden>
+    </div>
+    <ul id="filelist" class="filelist"></ul>
+    <div id="file-actions" class="file-actions" hidden>
+      <span id="file-count" class="file-count"></span>
+      <button type="button" id="clear-files" class="link-button">Remove all</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="run-heading">
+    <h2 id="run-heading">3. Run</h2>
+    <div class="run-row">
+      <button type="button" id="run" class="primary" disabled>Run</button>
+      <span id="status" class="status" role="status" aria-live="polite"></span>
+    </div>
+  </section>
+
+  <section id="results-section" class="panel" aria-labelledby="results-heading" hidden>
+    <div class="results-header">
+      <h2 id="results-heading">Results</h2>
+      <div class="results-controls">
+        <label class="inline-check">
+          <input type="checkbox" id="only-problems"> Only show files with problems
+        </label>
+        <button type="button" id="copy-all" class="link-button">Copy all output</button>
+      </div>
+    </div>
+    <div id="summary" class="summary-bar" hidden></div>
+    <div id="results"></div>
+  </section>
+</main>
+
+<footer class="footer">
+  <p>
+    dicom3tools is by <a href="https://www.dclunie.com/">David Clunie</a>, under a BSD licence.
+    Not for clinical use; this will not find every error.
+  </p>
+</footer>
+
+<script src="tools.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

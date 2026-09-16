@@ -1,0 +1,10 @@
+# Build tree created by build.sh (the dicom3tools source checkout and objects)
+.build/
+
+# Netlify CLI local state
+.netlify/
+
+# Test harness dependency, installed on demand
+node_modules/
+
+.DS_Store
