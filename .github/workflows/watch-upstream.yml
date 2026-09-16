@@ -1,0 +1,108 @@
+name: Watch upstream dicom3tools
+
+# dicom3tools behaviour changes between snapshots, so a stale build quietly
+# reports different things from the current release. Nothing else notices that,
+# hence this: it compares the snapshot we built from against the one upstream
+# and opens an issue when they diverge.
+#
+# It watches ImagingDataCommons/dicom3tools because that is the repository
+# build.sh clones, so the comparison is against the exact source a rebuild
+# would use. dclunie.com serves no directory listing, and PyPI publishes only
+# the date without the snapshot timestamp, so neither is usable here.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare our snapshot with upstream
+        id: compare
+        run: |
+          set -euo pipefail
+
+          ours=$(sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/' VERSION.txt)
+
+          # Fail loudly rather than reporting "up to date" if the fetch breaks:
+          # a watcher that goes quiet on error is worse than no watcher.
+          archive=$(curl -fsSL --max-time 60 \
+            https://raw.githubusercontent.com/ImagingDataCommons/dicom3tools/master/VERSION.txt \
+            | tr -d '\n')
+          theirs=$(printf %s "$archive" | sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/')
+
+          if ! printf %s "$theirs" | grep -qE '^[0-9]+$'; then
+            echo "could not read a snapshot id from upstream VERSION.txt: $archive"
+            exit 1
+          fi
+
+          {
+            echo "ours=$ours"
+            echo "theirs=$theirs"
+            echo "archive=$archive"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$ours" = "$theirs" ]; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "Up to date: built from $ours, upstream is $theirs"
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "Behind: built from $ours, upstream is $theirs"
+          fi
+
+      - name: Open an issue if we are behind
+        if: steps.compare.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OURS: ${{ steps.compare.outputs.ours }}
+          THEIRS: ${{ steps.compare.outputs.theirs }}
+          ARCHIVE: ${{ steps.compare.outputs.archive }}
+        run: |
+          set -euo pipefail
+
+          title="Upstream dicom3tools snapshot $THEIRS is available"
+
+          # One issue per snapshot, so a weekly run does not file a duplicate
+          # every Monday until someone acts on it.
+          existing=$(gh issue list --state open --search "$title in:title" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "already tracked in issue #$existing"
+            exit 0
+          fi
+
+          cat > /tmp/issue-body.md <<BODY
+          The committed wasm was built from snapshot \`$OURS\`. Upstream
+          [ImagingDataCommons/dicom3tools](https://github.com/ImagingDataCommons/dicom3tools)
+          is now at \`$THEIRS\` (\`$ARCHIVE\`).
+
+          This matters because dicom3tools behaviour changes between snapshots:
+          what one release reports as an error another may not mention at all,
+          so results from a stale build can differ from the current tools
+          without anything looking wrong.
+
+          To update:
+
+          1. Run \`./build.sh\`. It clones the current upstream, rebuilds the
+             wasm, and regenerates \`VERSION.txt\` and \`public/build-info.js\`.
+          2. Run \`node test-ui.js\`, and \`./test.sh\` against a directory of
+             DICOM files to compare the rebuilt wasm with the native binaries.
+          3. Open a pull request. CI checks that the snapshot shown in the page
+             matches \`VERSION.txt\`.
+
+          Opened automatically by \`.github/workflows/watch-upstream.yml\`.
+          BODY
+
+          gh issue create --title "$title" --body-file /tmp/issue-body.md
+
+      - name: Report when up to date
+        if: steps.compare.outputs.stale == 'false'
+        run: echo "Built from ${{ steps.compare.outputs.ours }}, which is current."

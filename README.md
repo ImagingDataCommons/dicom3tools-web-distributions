@@ -84,8 +84,13 @@ tool fails to compile.
 deploy time; the wasm is built by `build.sh` and committed, so a deploy is a
 file copy.
 
-GitHub Pages has no per-pull-request preview, so CI checks a pull request but
-does not deploy one.
+`.github/workflows/watch-upstream.yml` runs weekly and compares the snapshot in
+`VERSION.txt` against
+[ImagingDataCommons/dicom3tools](https://github.com/ImagingDataCommons/dicom3tools),
+the repository `build.sh` clones. If upstream has moved it opens an issue, one
+per snapshot, explaining how to rebuild. It fails rather than reporting success
+if the check itself cannot reach upstream, since a watcher that goes quiet on
+error is worse than no watcher.
 
 ## Testing
 
@@ -120,13 +125,15 @@ compressed pixel data, natively and in wasm alike.
   repository builds per upstream snapshot and pins artefacts by SHA256 rather
   than committing them, and this repository should follow that pattern before
   the history accumulates many 7 MB binaries.
-- No automated rebuild when a new upstream dicom3tools snapshot is released, and
-  nothing watches for one. `VERSION.txt` and `public/build-info.js` record the
-  snapshot the committed binary was built from.
-- No per-pull-request preview deployment.
-- Seven tools show a written description rather than captured output in the
-  picker, because they need input the samples do not cover: a structured
-  report, a DICOMDIR, a matched pair.
+- Rebuilding on a new upstream snapshot is still manual. `watch-upstream.yml`
+  notices and opens an issue, but someone then runs `build.sh` and opens the
+  pull request by hand.
+- 11 of the 24 tools show a written description rather than captured output in
+  the picker. Five produce text but need input the samples do not cover
+  (`dcsrdump`, `dccidump`, `dcdirdmp`, `dccmp`, `dcsort` — a structured report,
+  a DICOMDIR, a matched pair, a set worth sorting). Six produce files rather
+  than text (`dccp`, `dcdecmpr`, `dcuidchg`, `dcmulti`, `dcdirmk`, `rawtodc`),
+  so a useful sample needs something other than a few lines of output.
 - `dcanon` is not implemented.
 
 ## Licence
