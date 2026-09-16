@@ -3,6 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The page reads files and never sends them anywhere. connect-src 'self'
+     makes that a property the browser enforces rather than a claim about the
+     code: the only request the page can make is for its own wasm. Served as a
+     meta tag because GitHub Pages cannot set response headers. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>dicom3tools in the browser</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -14,6 +20,7 @@
     <p class="tagline">
       David Clunie's DICOM tools, compiled to WebAssembly.
       <strong>Files are processed in this browser tab and are never uploaded.</strong>
+      The page is only allowed to request its own files, so this is enforced rather than promised.
     </p>
     <p class="build-line">
       dicom3tools snapshot <span id="build-snapshot" class="build-version"></span><span id="build-extra"></span>
