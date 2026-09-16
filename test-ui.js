@@ -90,6 +90,34 @@ check('every tool has an example command', TOOLS.every((t) => t.example && t.exa
 check('every example says whether it is real output',
   TOOLS.every((t) => typeof t.example.real === 'boolean'));
 
+console.log('identifiers');
+// Examples are captured by running the tools against real DICOM files, so it
+// is easy to paste a patient id, accession number or study date into the
+// repository without noticing. The shape of the output is the point; the real
+// values add nothing. Anything identifier-shaped has to be replaced with an
+// obviously synthetic value before it lands here.
+const STANDARD_UID = /^1\.2\.840\.10008[\d.]*$/;      // DICOM standard root
+const ALLOWED = new Set(['unknown^unknown', 'Anon^Patient']);
+
+function suspectTokens(text) {
+  const found = [];
+  for (const token of text.split(/[\s<>()[\]="',|]+/).filter(Boolean)) {
+    if (STANDARD_UID.test(token)) continue;
+    if (ALLOWED.has(token)) continue;
+    if (/^ANON\d+$|^ACC\d+$/.test(token)) continue;      // synthetic by construction
+    if (/^\d{8}$/.test(token) && !/^20200101$/.test(token)) found.push(token + ' (date-shaped)');
+    else if (/^\d{9,}$/.test(token)) found.push(token.slice(0, 12) + '... (long identifier)');
+    else if (/^[A-Za-z]+\^[A-Za-z^]+$/.test(token)) found.push(token + ' (person-name-shaped)');
+  }
+  return found;
+}
+
+for (const tool of TOOLS) {
+  const hits = suspectTokens(tool.example.cmd + ' ' + tool.example.out);
+  check('no identifier-shaped values in ' + tool.id + (hits.length ? ': ' + hits.join(', ') : ''),
+    hits.length === 0);
+}
+
 console.log('css');
 const css = read('style.css');
 check('[hidden] outranks any class that sets display',
