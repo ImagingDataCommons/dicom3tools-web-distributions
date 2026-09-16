@@ -505,3 +505,21 @@ pre {
 @media (max-width: 560px) {
   .trigger { max-width: none; }
 }
+
+/* Which dicom3tools snapshot produced the binary. Shown because behaviour
+   changes between releases: what one snapshot reports as an error another may
+   not mention at all, so a finding is only meaningful against a known version. */
+.build-line {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.build-version {
+  font-family: var(--mono);
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
