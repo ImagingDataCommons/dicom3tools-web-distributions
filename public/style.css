@@ -523,3 +523,34 @@ pre {
   border-radius: 4px;
   padding: 1px 6px;
 }
+
+/* Header lays out as a row so the source link sits opposite the title; it drops
+   below the text at phone width rather than squeezing it. */
+.topbar-inner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.topbar-text { min-width: 0; }
+
+.repo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 11px;
+  background: var(--bg);
+}
+
+.repo-link:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}

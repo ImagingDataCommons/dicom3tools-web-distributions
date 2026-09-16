@@ -160,6 +160,18 @@ console.log('content policy');
   check('objects and form posts are denied', /object-src 'none'/.test(csp) && /form-action 'none'/.test(csp));
 }
 
+console.log('source link');
+{
+  const link = d.querySelector('.repo-link');
+  check('a source link is present', !!link);
+  check('it points at this repository',
+    !!link && link.getAttribute('href') === 'https://github.com/ImagingDataCommons/dicom3tools-web-distributions');
+  check('it opens safely in a new tab',
+    !!link && link.getAttribute('target') === '_blank' && /noopener/.test(link.getAttribute('rel') || ''));
+  // An externally hosted logo would be blocked by img-src 'self' data:.
+  check('the icon is inline rather than fetched', !!link && !!link.querySelector('svg') && !link.querySelector('img'));
+}
+
 console.log('css');
 const css = read('style.css');
 check('[hidden] outranks any class that sets display',
