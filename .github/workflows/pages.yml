@@ -33,6 +33,24 @@ jobs:
 
       - uses: actions/configure-pages@v5
 
+      # GitHub Pages serves assets with max-age=600 and does not allow setting
+      # response headers, so a stylesheet or script change is invisible for up
+      # to ten minutes. Stamping the links with the commit sha makes each
+      # deploy request a URL the browser has not seen. The wasm is deliberately
+      # left alone: it is 7MB, it changes only on a rebuild, and busting it
+      # every deploy would re-download it for no reason.
+      - name: Stamp asset links with the commit
+        run: |
+          set -euo pipefail
+          sha="${GITHUB_SHA::8}"
+          for asset in style.css build-info.js tools.js app.js worker.js; do
+            sed -i "s|\(['\"]\)$asset\1|\1$asset?v=$sha\1|g; s|=\"$asset\"|=\"$asset?v=$sha\"|g" \
+              public/index.html public/app.js
+          done
+          echo "--- stamped references ---"
+          grep -oE '(src|href)="[^"]+\?v=[a-f0-9]+"' public/index.html || true
+          grep -oE "Worker\('[^']+'\)" public/app.js || true
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
