@@ -7,6 +7,11 @@
 #
 #   ./build.sh
 #
+# The source is the upstream commit pinned in upstream.env, so a rebuild of the
+# same pin compiles the same code. The output (public/dicom3tools.js,
+# public/dicom3tools.wasm, public/build-info.js) is not committed: CI publishes
+# it as a release, and fetch-wasm.sh downloads a published one.
+#
 # Two things about the upstream build are worth knowing, because they are what
 # make this short:
 #
@@ -19,9 +24,11 @@
 #
 set -euo pipefail
 
-SRC_REPO="${SRC_REPO:-https://github.com/ImagingDataCommons/dicom3tools.git}"
-EMSDK_IMAGE="${EMSDK_IMAGE:-emscripten/emsdk:3.1.74}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=upstream.env
+. "$HERE/upstream.env"
+SRC_REPO="${SRC_REPO:-https://github.com/$UPSTREAM_REPO.git}"
+EMSDK_IMAGE="${EMSDK_IMAGE:-emscripten/emsdk:3.1.74}"
 WORK="$HERE/.build"
 
 # Seven helpers are copy-pasted into several tools, so they collide when the
@@ -32,9 +39,21 @@ dumpTransferSyntaxEncapsulation dumpTransferSyntaxPixelByteOrder"
 
 mkdir -p "$WORK"
 
+# Reuse an existing checkout only if it is the pinned commit; anything else
+# would build different source from what upstream.env claims.
+if [ -d "$WORK/src" ] && [ "$(git -C "$WORK/src" rev-parse HEAD 2>/dev/null)" != "$UPSTREAM_COMMIT" ]; then
+  echo "Discarding checkout of a different commit"
+  rm -rf "$WORK/src"
+fi
 if [ ! -d "$WORK/src" ]; then
-  echo "Fetching dicom3tools source"
-  git clone --depth 1 "$SRC_REPO" "$WORK/src"
+  echo "Fetching dicom3tools $UPSTREAM_COMMIT"
+  git init -q "$WORK/src"
+  git -C "$WORK/src" fetch -q --depth 1 "$SRC_REPO" "$UPSTREAM_COMMIT"
+  git -C "$WORK/src" checkout -q FETCH_HEAD
+fi
+if [ "$(cat "$WORK/src/VERSION.txt")" != "$UPSTREAM_ARCHIVE" ]; then
+  echo "upstream.env says $UPSTREAM_ARCHIVE, but $UPSTREAM_COMMIT has $(cat "$WORK/src/VERSION.txt")" >&2
+  exit 1
 fi
 
 cat > "$WORK/tools.txt" <<'EOF'
@@ -80,7 +99,16 @@ cd /work/src
 
 echo "==> configuring"
 ./Configure >/dev/null
-imake -I./config -DInstallInTopDir
+# UIDs are minted under the QIICR root (1.3.6.1.4.1.43046.3, as in dcmqi
+# QIICRUIDs.h) rather than the 0.0.0.0 placeholder in config/site.p-def, which
+# dciodvfy rejects. Same values as the upstream package builds, passed on the
+# command line as they are there because the upstream sync replaces config/.
+# check-build.js fails if they do not reach the binary, since a misspelt -D
+# name is silently ignored.
+imake -I./config -DInstallInTopDir \
+  -DDefaultUIDRoot=1.3.6.1.4.1.43046.3.1.5 \
+  -DDefaultImplementationClassUID=1.3.6.1.4.1.43046.3.0.2 \
+  -DDefaultInstanceCreatorUID=1.3.6.1.4.1.43046.3.0.3
 
 # First pass with the host compiler. Its object files are thrown away; what is
 # wanted is the awk-generated headers and tables, which are compiler
@@ -140,11 +168,15 @@ const BUILD_INFO = {
   // Upstream snapshot the programs were compiled from.
   dicom3toolsSnapshot: '$SNAPSHOT_ID',
   dicom3toolsArchive: '$SNAPSHOT_ARCHIVE',
+  upstreamCommit: '$UPSTREAM_COMMIT',
   emscripten: '$(printf %s "$EMSDK_IMAGE" | sed 's/.*://')',
   built: '$(date -u +%Y-%m-%d)',
+  // Programs compiled into the wasm. check-build.js compares this with the
+  // catalog in tools.js, since a listed tool that is missing from the binary
+  // fails only when someone picks it.
+  tools: [$(sed "s/.*/'&'/" "$WORK/tools.txt" | paste -sd, - | sed 's/,/, /g')],
 };
 EOF
-cp "$WORK/src/VERSION.txt" "$HERE/VERSION.txt"
 
 echo
 echo "Built:"
