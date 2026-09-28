@@ -89,8 +89,9 @@ tool fails to compile.
 ## Updating dicom3tools and releasing
 
 The wasm is published as release assets rather than committed, and a new
-upstream version reaches the site in four steps, only the last of which is by
-hand:
+upstream version reaches the site in four steps. Maintainers merge the pull
+request in step 2 and publish the release in step 4; the steps are in
+[MAINTAINING.md](MAINTAINING.md).
 
 1. `.github/workflows/watch-upstream.yml` runs weekly. It compares the upstream
    commit pinned in `upstream.env` with the head of
@@ -123,10 +124,9 @@ request runs `build.yml`, and merging it drafts a release.
 syntax checks every script and runs `test-ui.js`, which drives the real page
 scripts against a DOM and asserts the tool picker behaves.
 
-Two repository settings are needed once: Pages must use "GitHub Actions" as its
-source (Settings - Pages), and "Allow GitHub Actions to create and approve pull
-requests" must be enabled (Settings - Actions - General) for the watcher to
-open its pull request.
+[MAINTAINING.md](MAINTAINING.md) is the maintainer's checklist: how to take an
+update from pull request to published release, what to do when a step fails,
+how to roll back, and the repository settings the pipeline depends on.
 
 ## Testing
 
