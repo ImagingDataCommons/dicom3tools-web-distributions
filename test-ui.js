@@ -27,8 +27,17 @@ const d = w.document;
 
 // Same order as the page loads them; one eval so top-level consts share scope
 // the way separate <script> tags do in a browser.
+//
+// build-info.js is generated with the wasm and not committed, so a fixed
+// stand-in is used; what is tested is that the page shows whatever the build
+// reports. check-build.js checks the real file against the pin.
+const BUILD_INFO_STUB = `const BUILD_INFO = {
+  dicom3toolsSnapshot: '20200101000000',
+  dicom3toolsArchive: 'dicom3tools_1.00.snapshot.20200101000000.tar.bz2',
+  built: '2020-01-01',
+};`;
 w.eval(
-  [read('build-info.js'), read('tools.js'), read('app.js')].join('\n') +
+  [BUILD_INFO_STUB, read('tools.js'), read('app.js')].join('\n') +
   // top-level const in an eval is scoped to that eval, so hand out what the
   // assertions below need to reach
   '\nwindow.__TOOLS = TOOLS;' +
@@ -80,10 +89,7 @@ check('options re-render for the newly selected tool',
 
 console.log('version');
 check('snapshot is shown in the page',
-  /^\d{8,}$/.test(d.getElementById('build-snapshot').textContent.trim()));
-check('snapshot matches VERSION.txt',
-  fs.readFileSync(path.join(__dirname, 'VERSION.txt'), 'utf8')
-    .includes(d.getElementById('build-snapshot').textContent.trim()));
+  d.getElementById('build-snapshot').textContent.trim() === '20200101000000');
 
 console.log('catalog');
 const TOOLS = w.__TOOLS;

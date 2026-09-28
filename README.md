@@ -6,7 +6,7 @@ inspected in a browser without installing the command line tools.
 
 Files are read and processed inside the browser tab. Nothing is uploaded.
 
-Published to GitHub Pages on every push to `main`:
+Published to GitHub Pages whenever a release is published:
 **https://imagingdatacommons.github.io/dicom3tools-web-distributions/**
 
 The page states which dicom3tools snapshot the binary was built from. This
@@ -39,6 +39,13 @@ UID map across files, and `dcdisp`, which needs X11.
 
 ## Running it
 
+The wasm is not in the repository. Fetch the latest published build into
+`public/` first, or build one (below):
+
+```sh
+./fetch-wasm.sh            # or ./fetch-wasm.sh <release tag>
+```
+
 The page needs to be served over HTTP. Opening `index.html` from the filesystem
 does not work, because `file://` blocks web workers and wasm streaming.
 
@@ -54,6 +61,11 @@ Requires only Docker; everything else runs inside the Emscripten image.
 ./build.sh
 ```
 
+It compiles the upstream commit pinned in `upstream.env`, not whatever
+upstream's head happens to be, so the same pin always builds the same source.
+The output (`public/dicom3tools.js`, `public/dicom3tools.wasm` and
+`public/build-info.js`) is ignored by git.
+
 Two things about the upstream build are worth knowing, since they are what keeps
 this short:
 
@@ -64,35 +76,57 @@ this short:
   to stdout, and without the exit handlers the final buffer is never flushed,
   silently truncating the result.
 
+Tools that mint UIDs (`dcsmpte`, `dcuidchg`, `dcmulti`, `dcdirmk`, among
+others) use the QIICR root `1.3.6.1.4.1.43046.3.1.5`, with implementation class
+UID `1.3.6.1.4.1.43046.3.0.2` and instance creator UID
+`1.3.6.1.4.1.43046.3.0.3`, the same values as the upstream package builds.
+Upstream's own default is a `0.0.0.0` placeholder that `dciodvfy` rejects.
+
 `netpbm` is a real build dependency: `dcsmpte` renders its label text with
 `pbmtext` at build time, and without it `smptetxt.h` is generated empty and the
 tool fails to compile.
 
-## Continuous integration
+## Updating dicom3tools and releasing
 
-`.github/workflows/ci.yml` runs on every pull request and push to `main`:
+The wasm is published as release assets rather than committed, and a new
+upstream version reaches the site in four steps, only the last of which is by
+hand:
 
-- syntax checks every script,
-- runs `test-ui.js`, which drives the real page scripts against a DOM and
-  asserts the tool picker behaves,
-- confirms the committed wasm is present and starts with the wasm magic number,
-- confirms the snapshot in `public/build-info.js` matches `VERSION.txt`, so the
-  page cannot claim a version it was not built from.
+1. `.github/workflows/watch-upstream.yml` runs weekly. It compares the upstream
+   commit pinned in `upstream.env` with the head of
+   [ImagingDataCommons/dicom3tools](https://github.com/ImagingDataCommons/dicom3tools),
+   the C++ source `build.sh` fetches. Changes limited to upstream's `.github/`
+   and `README.md` are ignored, since they do not change what is compiled.
+2. If the source has moved, it pushes a branch moving the pin, builds that
+   branch with `build.yml`, and opens a pull request that shows the build
+   result as a `Build wasm` status. A newer bump closes an older unmerged one.
+3. Merging runs `.github/workflows/build.yml` on `main`, which builds the pin
+   again and saves the result as a **draft release** tagged
+   `snapshot-<snapshot>-<hash of build.sh, dispatch.cc and upstream.env>`.
+4. Publishing the draft runs `.github/workflows/pages.yml`, which deploys it.
 
-`.github/workflows/pages.yml` publishes `public/` to GitHub Pages on push to
-`main`, and can be run by hand from the Actions tab. Nothing is compiled at
-deploy time; the wasm is built by `build.sh` and committed, so a deploy is a
-file copy.
+The build checks behaviour only coarsely: `check-build.js` confirms the wasm is
+well formed, that every tool in the page's catalog is compiled in, that the
+build matches the pin, and that `dcsmpte` output is recognised by `dciodvfy`.
+Before publishing a release, run `test.sh` (below) against the native tools on
+real data.
 
-`.github/workflows/watch-upstream.yml` runs weekly and compares the snapshot in
-`VERSION.txt` against
-[ImagingDataCommons/dicom3tools](https://github.com/ImagingDataCommons/dicom3tools)
-— the C++ source `build.sh` clones, not the Python packaging repository. It
-reads whichever branch is upstream's default, so it tracks exactly what a
-rebuild would fetch. If upstream has moved it opens an issue, one per snapshot,
-explaining how to rebuild. It fails rather than reporting success if the check
-cannot reach upstream or cannot parse the result, since a watcher that goes
-quiet on error is worse than no watcher.
+`pages.yml` deploys `main`'s `public/` with the latest published release, on
+publish and on any page change to `main`, so a page fix never rolls the wasm
+back. A pin bump that has been merged but not published leaves the site on the
+previous release, as intended.
+
+Changes to `build.sh` or `dispatch.cc` go through the same path: the pull
+request runs `build.yml`, and merging it drafts a release.
+
+`.github/workflows/ci.yml` runs on every pull request and push to `main`. It
+syntax checks every script and runs `test-ui.js`, which drives the real page
+scripts against a DOM and asserts the tool picker behaves.
+
+Two repository settings are needed once: Pages must use "GitHub Actions" as its
+source (Settings - Pages), and "Allow GitHub Actions to create and approve pull
+requests" must be enabled (Settings - Actions - General) for the watcher to
+open its pull request.
 
 ## Testing
 
@@ -101,6 +135,7 @@ quiet on error is worse than no watcher.
 
 ```sh
 pip install dicom3tools
+./fetch-wasm.sh            # or ./build.sh, or the build run's dicom3tools-wasm artifact
 ./test.sh /path/to/dicom/files
 ```
 
@@ -121,15 +156,6 @@ compressed pixel data, natively and in wasm alike.
 
 ## TODO
 
-- The wasm is still built by hand. `build.sh` is run locally and the binary
-  committed; CI only publishes it. The sibling
-  [dicom3tools-python-distributions](https://github.com/ImagingDataCommons/dicom3tools-python-distributions)
-  repository builds per upstream snapshot and pins artefacts by SHA256 rather
-  than committing them, and this repository should follow that pattern before
-  the history accumulates many 7 MB binaries.
-- Rebuilding on a new upstream snapshot is still manual. `watch-upstream.yml`
-  notices and opens an issue, but someone then runs `build.sh` and opens the
-  pull request by hand.
 - `dcsort` is the one tool still showing a written description rather than
   captured output. It produced no output on any input tried, including a single
   series and a directory of images, so it needs investigating rather than a
@@ -143,7 +169,7 @@ License 2.0; see [LICENSE](LICENSE).
 
 The dicom3tools programs compiled into `public/dicom3tools.wasm` are David
 Clunie's work under his own BSD-style licence, reproduced in
-[COPYRIGHT.dicom3tools](COPYRIGHT.dicom3tools). `VERSION.txt` names the upstream
-snapshot the binary was built from.
+[COPYRIGHT.dicom3tools](COPYRIGHT.dicom3tools). `upstream.env` names the upstream
+commit and snapshot it is built from, and each release's notes record them.
 
 Not for clinical use. This will not find every error.

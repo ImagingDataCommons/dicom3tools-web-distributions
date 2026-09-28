@@ -4,6 +4,7 @@
 # dicom3tools pip wheel, which is the reference this is meant to reproduce.
 #
 #   pip install dicom3tools
+#   ./fetch-wasm.sh          # or ./build.sh, to test a local build
 #   ./test.sh /path/to/dicom/files
 #
 # Tools that mint fresh UIDs and timestamps on every run (dcsmpte, dcmulti,

@@ -1,0 +1,149 @@
+name: Build wasm
+
+# Builds the wasm from the upstream commit pinned in upstream.env and checks it.
+#
+# - On a pull request that changes what gets built, this is the check that
+#   the change still builds and runs.
+# - On main, the result becomes a draft release. Publishing the draft is the
+#   human step that ships it: pages.yml deploys on publish. The draft holds the
+#   binary that was built and checked here, not a rebuild of it.
+# - watch-upstream.yml calls this for its pin-bump branch, because a pull
+#   request it opens with GITHUB_TOKEN does not trigger workflows.
+
+on:
+  pull_request:
+    paths:
+      - upstream.env
+      - build.sh
+      - dispatch.cc
+      - check-build.js
+      - .github/workflows/build.yml
+  push:
+    branches: [main]
+    paths:
+      - upstream.env
+      - build.sh
+      - dispatch.cc
+      - check-build.js
+      - .github/workflows/build.yml
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Branch or commit to build instead of the triggering one
+        type: string
+        required: true
+    outputs:
+      tag:
+        description: Release tag this build would be published under
+        value: ${{ jobs.build.outputs.tag }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      archive: ${{ steps.tag.outputs.archive }}
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The tag names the snapshot for people and a hash of every build input
+      # for uniqueness: rebuilding the same snapshot with a changed build.sh,
+      # dispatch.cc or emscripten version is a different binary and must not
+      # replace a published release.
+      - name: Name the release
+        id: tag
+        run: |
+          set -euo pipefail
+          . ./upstream.env
+          snapshot=$(printf %s "$UPSTREAM_ARCHIVE" | sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/')
+          inputs=$(cat upstream.env build.sh dispatch.cc | sha256sum | cut -c1-8)
+          {
+            echo "tag=snapshot-$snapshot-$inputs"
+            echo "archive=$UPSTREAM_ARCHIVE"
+            echo "commit=$UPSTREAM_COMMIT"
+          } >> "$GITHUB_OUTPUT"
+          echo "release tag: snapshot-$snapshot-$inputs"
+
+      - name: Build
+        run: ./build.sh
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Check the build
+        run: node check-build.js --pin
+
+      - name: Collect assets
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp public/dicom3tools.js public/dicom3tools.wasm public/build-info.js dist/
+          (cd dist && sha256sum dicom3tools.js dicom3tools.wasm build-info.js > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dicom3tools-wasm
+          path: dist/
+          retention-days: 30
+
+  draft-release:
+    # Only a build of main itself; not pull requests, and not watch-upstream's
+    # branch (which calls this with a ref).
+    if: >-
+      github.ref == 'refs/heads/main' && !inputs.ref &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dicom3tools-wasm
+          path: dist
+
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          ARCHIVE: ${{ needs.build.outputs.archive }}
+          COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          cat > notes.md <<NOTES
+          dicom3tools \`$ARCHIVE\` compiled to WebAssembly.
+
+          - Upstream source: [ImagingDataCommons/dicom3tools@${COMMIT::12}](https://github.com/ImagingDataCommons/dicom3tools/commit/$COMMIT)
+          - Built from: $GITHUB_SHA
+          - Build run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Publishing this release deploys it to GitHub Pages.
+          NOTES
+
+          # A published release is never modified: identical inputs mean an
+          # equivalent binary, and what has shipped should stay what shipped.
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" = "false" ]; then
+              echo "::notice::$TAG is already published; leaving it alone"
+              exit 0
+            fi
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --target "$GITHUB_SHA" --notes-file notes.md
+            echo "Updated draft $TAG"
+          else
+            gh release create "$TAG" dist/* --draft --target "$GITHUB_SHA" \
+              --title "dicom3tools ${ARCHIVE%.tar.bz2}" --notes-file notes.md
+            echo "Created draft $TAG"
+          fi

@@ -1,14 +1,21 @@
 name: Watch upstream dicom3tools
 
 # dicom3tools behaviour changes between snapshots, so a stale build quietly
-# reports different things from the current release. Nothing else notices that,
-# hence this: it compares the snapshot we built from against the one upstream
-# and opens an issue when they diverge.
+# reports different things from the current release. This compares the
+# upstream commit pinned in upstream.env with upstream's current head and,
+# when the source has moved, opens a pull request moving the pin.
 #
-# It watches ImagingDataCommons/dicom3tools because that is the repository
-# build.sh clones, so the comparison is against the exact source a rebuild
-# would use. dclunie.com serves no directory listing, and PyPI publishes only
-# the date without the snapshot timestamp, so neither is usable here.
+# The pull request is opened with GITHUB_TOKEN, and GitHub does not start
+# workflows for pull requests opened that way. So this builds the new pin
+# itself, through the same build.yml a pull request would run, and records
+# the result as a commit status on the branch, where the pull request shows it.
+#
+# It watches ImagingDataCommons/dicom3tools because that is where build.sh
+# fetches from. dclunie.com serves no directory listing, and PyPI publishes
+# only the date without the snapshot timestamp, so neither is usable here.
+#
+# Opening the pull request needs "Allow GitHub Actions to create and approve
+# pull requests" enabled under Settings - Actions - General.
 
 on:
   schedule:
@@ -17,102 +24,204 @@ on:
 
 permissions:
   contents: read
-  issues: write
+
+# Two overlapping runs would race to push the same branch.
+concurrency:
+  group: watch-upstream
+  cancel-in-progress: false
 
 jobs:
-  check:
+  detect:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      update: ${{ steps.compare.outputs.update }}
+      branch: ${{ steps.compare.outputs.branch }}
+      sha: ${{ steps.push.outputs.sha }}
+      ours: ${{ steps.compare.outputs.ours }}
+      theirs: ${{ steps.compare.outputs.theirs }}
+      old_archive: ${{ steps.compare.outputs.old_archive }}
+      new_archive: ${{ steps.compare.outputs.new_archive }}
+      files: ${{ steps.compare.outputs.files }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Compare our snapshot with upstream
+      - name: Compare the pin with upstream
         id: compare
         env:
           GH_TOKEN: ${{ github.token }}
-          UPSTREAM: ImagingDataCommons/dicom3tools
         run: |
           set -euo pipefail
+          . ./upstream.env
 
-          ours=$(sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/' VERSION.txt)
+          # Follow whichever branch is upstream's default; hardcoding main or
+          # master would report "up to date" forever if the one picked went
+          # stale.
+          branch=$(gh api "repos/$UPSTREAM_REPO" --jq .default_branch)
+          head=$(gh api "repos/$UPSTREAM_REPO/commits/$branch" --jq .sha)
+          echo "pinned $UPSTREAM_COMMIT, upstream $branch is at $head"
 
-          # Read whichever branch is upstream's default, because that is what
-          # build.sh clones. That repository currently has both main and master
-          # at the same commit; hardcoding either would silently report "up to
-          # date" forever if the one we picked stopped being maintained.
-          branch=$(gh api "repos/$UPSTREAM" --jq .default_branch)
-          echo "upstream default branch: $branch"
-
-          # Fail loudly rather than reporting "up to date" if the fetch breaks:
-          # a watcher that goes quiet on error is worse than no watcher.
-          archive=$(curl -fsSL --max-time 60 \
-            "https://raw.githubusercontent.com/$UPSTREAM/$branch/VERSION.txt" \
-            | tr -d '\n')
-          theirs=$(printf %s "$archive" | sed -E 's/.*snapshot\.([0-9]+)\.tar.*/\1/')
-
-          if ! printf %s "$theirs" | grep -qE '^[0-9]+$'; then
-            echo "could not read a snapshot id from upstream VERSION.txt: $archive"
-            exit 1
-          fi
-
-          {
-            echo "ours=$ours"
-            echo "theirs=$theirs"
-            echo "archive=$archive"
-          } >> "$GITHUB_OUTPUT"
-
-          if [ "$ours" = "$theirs" ]; then
-            echo "stale=false" >> "$GITHUB_OUTPUT"
-            echo "Up to date: built from $ours, upstream is $theirs"
-          else
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-            echo "Behind: built from $ours, upstream is $theirs"
-          fi
-
-      - name: Open an issue if we are behind
-        if: steps.compare.outputs.stale == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OURS: ${{ steps.compare.outputs.ours }}
-          THEIRS: ${{ steps.compare.outputs.theirs }}
-          ARCHIVE: ${{ steps.compare.outputs.archive }}
-        run: |
-          set -euo pipefail
-
-          title="Upstream dicom3tools snapshot $THEIRS is available"
-
-          # One issue per snapshot, so a weekly run does not file a duplicate
-          # every Monday until someone acts on it.
-          existing=$(gh issue list --state open --search "$title in:title" \
-            --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            echo "already tracked in issue #$existing"
+          if [ "$head" = "$UPSTREAM_COMMIT" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "Up to date."
             exit 0
           fi
 
-          cat > /tmp/issue-body.md <<BODY
-          The committed wasm was built from snapshot \`$OURS\`. Upstream
-          [ImagingDataCommons/dicom3tools](https://github.com/ImagingDataCommons/dicom3tools)
-          is now at \`$THEIRS\` (\`$ARCHIVE\`).
+          # .github/ and README.md are the fork's own packaging and notes; the
+          # upstream sync replaces everything else. A change to only those
+          # does not change what build.sh compiles, so it is not worth a PR.
+          files=$(gh api "repos/$UPSTREAM_REPO/compare/$UPSTREAM_COMMIT...$head" \
+            --jq '.files[].filename' | grep -vE '^(\.github/|README\.md$)' || true)
+          if [ -z "$files" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream moved, but only in .github/ or README.md; nothing to rebuild."
+            exit 0
+          fi
 
-          This matters because dicom3tools behaviour changes between snapshots:
-          what one release reports as an error another may not mention at all,
-          so results from a stale build can differ from the current tools
-          without anything looking wrong.
+          # Fail loudly rather than go quiet if the fetch breaks: a watcher
+          # that stops reporting on error is worse than no watcher.
+          archive=$(curl -fsSL --max-time 60 \
+            "https://raw.githubusercontent.com/$UPSTREAM_REPO/$head/VERSION.txt" | tr -d '\n')
+          if ! printf %s "$archive" | grep -qE 'snapshot\.[0-9]+\.tar'; then
+            echo "could not read a snapshot from upstream VERSION.txt: $archive"
+            exit 1
+          fi
 
-          To update:
+          pr_branch="upstream/${head::12}"
+          existing=$(gh pr list --head "$pr_branch" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "Already proposed in #$existing."
+            exit 0
+          fi
 
-          1. Run \`./build.sh\`. It clones the current upstream, rebuilds the
-             wasm, and regenerates \`VERSION.txt\` and \`public/build-info.js\`.
-          2. Run \`node test-ui.js\`, and \`./test.sh\` against a directory of
-             DICOM files to compare the rebuilt wasm with the native binaries.
-          3. Open a pull request. CI checks that the snapshot shown in the page
-             matches \`VERSION.txt\`.
+          {
+            echo "update=true"
+            echo "branch=$pr_branch"
+            echo "ours=$UPSTREAM_COMMIT"
+            echo "theirs=$head"
+            echo "old_archive=$UPSTREAM_ARCHIVE"
+            echo "new_archive=$archive"
+            echo "files<<FILES_EOF"
+            echo "$files"
+            echo "FILES_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Behind: $UPSTREAM_ARCHIVE -> $archive"
+
+      - name: Push the pin bump to a branch
+        id: push
+        if: steps.compare.outputs.update == 'true'
+        env:
+          BRANCH: ${{ steps.compare.outputs.branch }}
+          OURS: ${{ steps.compare.outputs.ours }}
+          THEIRS: ${{ steps.compare.outputs.theirs }}
+          OLD_ARCHIVE: ${{ steps.compare.outputs.old_archive }}
+          NEW_ARCHIVE: ${{ steps.compare.outputs.new_archive }}
+        run: |
+          set -euo pipefail
+          sed -i "s|^UPSTREAM_COMMIT=.*|UPSTREAM_COMMIT=$THEIRS|; s|^UPSTREAM_ARCHIVE=.*|UPSTREAM_ARCHIVE=$NEW_ARCHIVE|" upstream.env
+          git diff --exit-code --quiet upstream.env && { echo "upstream.env did not change"; exit 1; }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -q -am "Build from upstream ${NEW_ARCHIVE%.tar.bz2}" \
+            -m "Moves the pin from ImagingDataCommons/dicom3tools@${OURS::12} ($OLD_ARCHIVE) to @${THEIRS::12}."
+          # Force, so a run that failed after pushing can be retried.
+          git push -q --force origin "HEAD:refs/heads/$BRANCH"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.update == 'true'
+    uses: ./.github/workflows/build.yml
+    # build.yml's draft-release job asks for contents: write. It is skipped
+    # here, but a called workflow may not request more than its caller grants.
+    permissions:
+      contents: write
+    with:
+      ref: ${{ needs.detect.outputs.sha }}
+
+  open-pr:
+    needs: [detect, build]
+    # Open it even if the build failed: the pull request is where someone
+    # will see that the new snapshot does not build.
+    if: always() && needs.detect.result == 'success' && needs.detect.outputs.update == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to delete the branches of superseded pull requests
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Record the build result on the branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.detect.outputs.sha }}
+          RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          case "$RESULT" in
+            success) state=success; description="Built and checked" ;;
+            *)       state=failure; description="Build $RESULT" ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state="$state" -f context="Build wasm" -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ needs.detect.outputs.branch }}
+          OURS: ${{ needs.detect.outputs.ours }}
+          THEIRS: ${{ needs.detect.outputs.theirs }}
+          OLD_ARCHIVE: ${{ needs.detect.outputs.old_archive }}
+          NEW_ARCHIVE: ${{ needs.detect.outputs.new_archive }}
+          FILES: ${{ needs.detect.outputs.files }}
+          RESULT: ${{ needs.build.result }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ "$RESULT" = "success" ]; then
+            build="The new pin builds, and the result passes \`check-build.js --pin\` ([run]($run_url)). Once merged, the build on \`main\` creates the draft release \`$TAG\`."
+          else
+            build="**The new pin did not build** (build $RESULT, [run]($run_url)). Do not merge until that is fixed."
+          fi
+          count=$(printf '%s\n' "$FILES" | wc -l | tr -d ' ')
+          shown=$(printf '%s\n' "$FILES" | head -40 | sed 's/^/- `/; s/$/`/')
+
+          cat > body.md <<BODY
+          Upstream [ImagingDataCommons/dicom3tools](https://github.com/ImagingDataCommons/dicom3tools) has moved.
+
+          | | Commit | Snapshot |
+          |---|---|---|
+          | Pinned | \`${OURS::12}\` | \`$OLD_ARCHIVE\` |
+          | Upstream | \`${THEIRS::12}\` | \`$NEW_ARCHIVE\` |
+
+          [Compare upstream changes](https://github.com/ImagingDataCommons/dicom3tools/compare/$OURS...$THEIRS) ($count files outside \`.github/\` and \`README.md\`):
+
+          $shown
+
+          $build
+
+          dicom3tools behaviour changes between snapshots: what one release
+          reports as an error another may not mention at all. The build check
+          only confirms the tools run. Before publishing the release, compare the
+          new wasm with the native tools on real data: download the
+          \`dicom3tools-wasm\` artifact from the run into \`public/\`, then run
+          \`./test.sh <dir of DICOM files>\`.
 
           Opened automatically by \`.github/workflows/watch-upstream.yml\`.
           BODY
 
-          gh issue create --title "$title" --body-file /tmp/issue-body.md
+          url=$(gh pr create --head "$BRANCH" --base main \
+            --title "Build from upstream ${NEW_ARCHIVE%.tar.bz2}" --body-file body.md)
+          echo "Opened $url"
 
-      - name: Report when up to date
-        if: steps.compare.outputs.stale == 'false'
-        run: echo "Built from ${{ steps.compare.outputs.ours }}, which is current."
+          # An older pin bump nobody merged is now superseded by this one.
+          for n in $(gh pr list --state open --json number,headRefName \
+              --jq ".[] | select(.headRefName | startswith(\"upstream/\")) | select(.headRefName != \"$BRANCH\") | .number"); do
+            gh pr close "$n" --delete-branch --comment "Superseded by $url."
+          done
