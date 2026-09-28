@@ -29,9 +29,9 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       # GitHub Pages serves assets with max-age=600 and does not allow setting
       # response headers, so a stylesheet or script change is invisible for up
@@ -51,9 +51,9 @@ jobs:
           grep -oE '(src|href)="[^"]+\?v=[a-f0-9]+"' public/index.html || true
           grep -oE "Worker\('[^']+'\)" public/app.js || true
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: public
 
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
